@@ -2,7 +2,7 @@
 name: exchange-converter
 description: Convert between fiat currencies AND cryptocurrencies using live exchange rates with offline cache support. Trigger when user says "convert currency", "how much is X in Y", "exchange rate", "convert BTC to USD", "how much is ETH in EUR", "help", or asks to convert an amount from one currency/crypto to another.
 metadata:
-  homepage: https://github.com/esvialv/exchange-converter
+  homepage: https://github.com/victoralv/exchange-converter
 ---
 
 # Exchange Converter
