@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head></head>
+<body>
+    <script>
+        window['ai_edge_gallery_get_result'] = async (data) => {
+            try {
+                const jsonData = JSON.parse(data);
+                const action = (jsonData.action || 'convert').toLowerCase();
+                const CACHE_KEY = 'exchange_rates_cache';
+
+                const FLAG_OVERRIDES = {
+                    EUR: '\uD83C\uDDEA\uD83C\uDDFA', XAF: '\uD83C\uDDE8\uD83C\uDDEB',
+                    XOF: '\uD83C\uDDE7\uD83C\uDDEB', XCD: '\uD83C\uDDE6\uD83C\uDDEC',
+                    XPF: '\uD83C\uDDF5\uD83C\uDDEB', ANG: '\uD83C\uDDE8\uD83C\uDDFC'
+                };
+                function getFlag(code) {
+                    if (FLAG_OVERRIDES[code]) return FLAG_OVERRIDES[code];
+                    const cc = code.substring(0, 2);
+                    return String.fromCodePoint(
+                        0x1F1E6 + cc.charCodeAt(0) - 65,
+                        0x1F1E6 + cc.charCodeAt(1) - 65
+                    );
+                }
+
+                // ── HELP action ──────────────────────────────────────────────
+                if (action === 'help') {
+                    return JSON.stringify({
+                        action: 'help',
+                        help: [
+                            '💱 Exchange Converter',
+                            '',
+                            'Supports fiat currencies and cryptocurrencies.',
+                            '',
+                            '🔄 Convert:',
+                            '  • "100 USD to EUR"',
+                            '  • "0.5 BTC to USD"',
+                            '  • "1 ETH in GBP"',
+                            '',
+                            '📋 List currencies:',
+                            '  • "What currencies are available?"',
+                            '',
+                            '📶 Works offline using cached rates.',
+                            'Connect once to fetch live rates, then use anytime.'
+                        ].join('\n')
+                    });
+                }
+
+                // ── LIST action ──────────────────────────────────────────────
+                if (action === 'list') {
+                    const stored = localStorage.getItem(CACHE_KEY);
+                    if (!stored) {
+                        return JSON.stringify({
+                            error: 'No cached currencies yet. Run a conversion first to populate the cache.'
+                        });
+                    }
+                    const cache = JSON.parse(stored);
+                    const codes = Object.keys(cache.rates).sort().join(' ');
+                    return JSON.stringify({
+                        action: 'list',
+                        total: Object.keys(cache.rates).length,
+                        date: cache.date,
+                        currencies: codes
+                    });
+                }
+
+                // ── CONVERT action ───────────────────────────────────────────
+                const amount = parseFloat(jsonData.amount) || 1;
+                const from = (jsonData.from || '').toUpperCase().trim();
+                const to = (jsonData.to || '').toUpperCase().trim();
+
+                if (!from || !to) {
+                    return JSON.stringify({
+                        error: 'Missing currency codes. Provide "from" and "to" fields.'
+                    });
+                }
+
+                let rates = null;
+                let fetchedDate = null;
+                let source = 'live';
+                const debug = [];
+
+                // Try fetching fresh rates using CORS-friendly APIs.
+                try {
+                    const fromLower = from.toLowerCase();
+                    const urls = [
+                        'https://latest.currency-api.pages.dev/v1/currencies/' + fromLower + '.json',
+                        'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/' + fromLower + '.json'
+                    ];
+
+                    let apiData = null;
+                    let lastErr = null;
+                    for (const url of urls) {
+                        try {
+                            debug.push('Trying: ' + url);
+                            const response = await fetch(url);
+                            debug.push('Response status: ' + response.status);
+                            if (!response.ok) throw new Error('HTTP ' + response.status);
+                            const json = await response.json();
+                            debug.push('Got JSON with keys: ' + Object.keys(json).join(', '));
+
+                            const ratesObj = json[fromLower];
+                            if (ratesObj && typeof ratesObj === 'object') {
+                                const upperRates = {};
+                                for (const [code, value] of Object.entries(ratesObj)) {
+                                    upperRates[code.toUpperCase()] = value;
+                                }
+                                apiData = { rates: upperRates, date: json.date };
+                                debug.push('Fetched ' + Object.keys(upperRates).length + ' rates, date: ' + json.date);
+                                break;
+                            } else {
+                                throw new Error('Unexpected response: ' + JSON.stringify(json).substring(0, 200));
+                            }
+                        } catch (e) {
+                            debug.push('Failed: ' + e.message);
+                            lastErr = e;
+                        }
+                    }
+                    if (!apiData) throw lastErr;
+
+                    rates = apiData.rates;
+                    rates[from] = 1;
+                    fetchedDate = apiData.date;
+                    debug.push('Source: live');
+
+                    localStorage.setItem(CACHE_KEY, JSON.stringify({
+                        base: from,
+                        rates: rates,
+                        date: fetchedDate,
+                        cachedAt: new Date().toISOString()
+                    }));
+                    debug.push('Cached rates for ' + from);
+                } catch (fetchErr) {
+                    debug.push('All fetches failed: ' + fetchErr.message);
+                    source = 'cached';
+                    const stored = localStorage.getItem(CACHE_KEY);
+                    debug.push('Cache exists: ' + !!stored);
+                    if (!stored) {
+                        return JSON.stringify({
+                            error: 'Could not fetch rates: ' + fetchErr.message
+                                + '. No cached rates available either. '
+                                + 'Connect to the internet once to fetch rates.',
+                            debug: debug
+                        });
+                    }
+                    const cache = JSON.parse(stored);
+                    rates = cache.rates;
+                    fetchedDate = cache.date;
+
+                    if (cache.base !== from) {
+                        const fromInBase = rates[from];
+                        if (!fromInBase) {
+                            return JSON.stringify({
+                                error: 'Currency "' + from + '" not found in cached rates. '
+                                    + 'Connect to the internet to fetch updated rates.'
+                            });
+                        }
+                        const rebased = {};
+                        for (const [code, value] of Object.entries(rates)) {
+                            rebased[code] = value / fromInBase;
+                        }
+                        rebased[from] = 1;
+                        rates = rebased;
+                    }
+                }
+
+                const rate = rates[to];
+                if (rate === undefined || rate === null) {
+                    return JSON.stringify({
+                        error: 'Currency "' + to + '" not found. '
+                            + 'Use ISO 4217 codes (e.g., USD, EUR, GBP, JPY).'
+                    });
+                }
+
+                const converted = (amount * rate).toFixed(2);
+                const rateDisplay = rate.toFixed(6);
+                const reqId = Date.now().toString(36);
+
+                debug.push('Final source: ' + source + ', rate ' + from + '->' + to + ': ' + rate);
+                return JSON.stringify({
+                    id: reqId,
+                    fromFlag: getFlag(from),
+                    fromAmount: amount.toFixed(2),
+                    fromCode: from,
+                    toFlag: getFlag(to),
+                    toAmount: converted,
+                    toCode: to,
+                    rate: rateDisplay,
+                    date: fetchedDate,
+                    offline: source === 'cached',
+                    debug: debug
+                });
+            } catch (e) {
+                console.error(e);
+                return JSON.stringify({
+                    error: 'Conversion failed: ' + e.message,
+                    debug: typeof debug !== 'undefined' ? debug : []
+                });
+            }
+        };
+    </script>
+</body>
+</html>
