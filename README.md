@@ -80,7 +80,7 @@ User prompt ──► Gemma 4 (on-device) ──► Parses intent & currencies
 2. Tap **Agent Skills** → **Add Custom Skill** → **From URL**.
 3. Paste this URL:
 ```
-https://github.com/victoralv/exchange-converter
+https://victoralv.github.io/exchange-converter
 ```
 4. Confirm. The skill will load and activate **Exchange Converter v1.0.0**.
 
